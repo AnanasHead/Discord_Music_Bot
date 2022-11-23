@@ -96,7 +96,7 @@ def play_next(ctx):
             info = ydl.extract_info(url, download=False)
             currentTrack = info['title']
             url2 = info['formats'][0]['url']
-            source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS, executable="C:\\ffmpeg\\bin\\ffmpeg.exe")
+            source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
             vc.play(source, after=lambda e: play_next(ctx))
 
 def getQueue():

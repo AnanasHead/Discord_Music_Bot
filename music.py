@@ -37,7 +37,7 @@ class music(commands.Cog):
                 titleInfo = info['title']
                 currentTrack = titleInfo
                 duration = convert(info['duration'])
-                source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS, executable="C:\\ffmpeg\\bin\\ffmpeg.exe")
+                source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
                 await ctx.reply(f"🎶Wird gespielt🎶\n**{titleInfo}** ({duration})", mention_author=False)
                 vc.play(source, after=lambda e: play_next(ctx))
 

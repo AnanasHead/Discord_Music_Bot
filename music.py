@@ -63,11 +63,11 @@ class music(commands.Cog):
                     titleList[ctx.guild.id].append(titleInfo)
                 except:
                     titleList[ctx.guild.id] = [titleInfo]
-                    await ctx.reply(f"Added **{titleInfo}** ({duration}) to the Queue", mention_author=False)
+                await ctx.reply(f"Added **{titleInfo}** ({duration}) to the Queue", mention_author=False)
 
         @client.command(name="listQueue", aliases = ["lq", "ListQueue", "List", "list"], help='Lists the songs in the queue')
         async def listQueue(ctx):
-            await ctx.reply("In der Queue befinden sich im Moment: \n" + '\n'.join(map(str, titleList[ctx.guild.id])), mention_author=False)        
+            await ctx.reply(f"In der Queue befinden sich im Moment: \n {titleList[ctx.guild.id]}", mention_author=False)        
 
         @client.command(name="pause", aliases = ["ps", "Pause"], help='Pauses the current Song')
         async def pause(ctx):

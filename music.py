@@ -67,7 +67,7 @@ class music(commands.Cog):
 
         @client.command(name="listQueue", aliases = ["lq", "ListQueue", "List", "list"], help='Lists the songs in the queue')
         async def listQueue(ctx):
-            await ctx.reply(f"In der Queue befinden sich im Moment: \n {titleList(ctx.guild.id)}", mention_author=False)        
+            await ctx.reply(f"In der Queue befinden sich im Moment: \n {titleList[ctx.guild.id]}", mention_author=False)        
 
         @client.command(name="pause", aliases = ["ps", "Pause"], help='Pauses the current Song')
         async def pause(ctx):

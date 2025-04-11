@@ -1,14 +1,22 @@
+from time import thread_time
 import discord
 from discord.ext import commands
 import yt_dlp as youtube_dl
+import asyncio
+##from lyricsgenius import Genius
+##import os
 
 queueList = {}
 titleList = {}
 
+# Genius API Setup
+##secret = os.environ['GENIUS_ACCESS_TOKEN']
+##genius = Genius(secret)
+
 FFMPEG_OPTIONS = {
-  'before_options':
-  '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-  'options': '-vn'
+    'before_options':
+    '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
 }
 YDL_OPTIONS = {'format': "bestaudio"}
 
@@ -35,6 +43,11 @@ class music(commands.Cog):
                     help='Leave channel')
     async def leave(ctx):
       await ctx.voice_client.disconnect()
+      # Lösche die Warteschlange für diese Guild
+      try:
+        clearQ(ctx)
+      except KeyError:
+        pass
 
     @client.command(name="play",
                     aliases=["p", "Play"],
@@ -47,20 +60,7 @@ class music(commands.Cog):
         await ctx.voice_client.move_to(voice_channel)
 
       ctx.voice_client.stop()
-      vc = ctx.voice_client
-
-      with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
-        info = ydl.extract_info(url, download=False)
-        url2 = info['url']
-        titleInfo = info['title']
-        duration = convert(info['duration'])
-        source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
-        await ctx.reply(f"🎶Wird gespielt🎶\n**{titleInfo}** ({duration})",
-                        mention_author=False)
-        discord.opus.load_opus('opus/libopus.so')
-        if not discord.opus.is_loaded():
-          raise RuntimeError('Opus failed to load')
-        vc.play(source, after=lambda e: play_next(ctx))
+      await player(ctx, url, None)
 
     @client.command(name="queue",
                     aliases=["q", "Queue", "next", "Next"],
@@ -69,29 +69,64 @@ class music(commands.Cog):
       if ctx.author.voice is None:
         await ctx.send("You must be in a channel to edit the queue")
       else:
-        try:
-          queueList[ctx.guild.id].append(url)
-        except:
-          queueList[ctx.guild.id] = [url]
-        YDL_OPTIONS = {'format': "bestaudio"}
-        with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
-          info = ydl.extract_info(url, download=False)
-          titleInfo = info['title']
-          duration = convert(info['duration'])
-        try:
-          titleList[ctx.guild.id].append(titleInfo)
-        except:
-          titleList[ctx.guild.id] = [titleInfo]
-        await ctx.reply(f"Added **{titleInfo}** ({duration}) to the Queue",
-                        mention_author=False)
+        # Prüfe, ob es sich um eine URL handelt (einfache Validierung)
+        if not url.startswith(("http://", "https://", "www.")):
+          # Suchanfrage statt direkter URL
+          await add_queue(ctx, None, url)
+        else:
+          # Direkter Link
+          await add_queue(ctx, url, None)
 
     @client.command(name="listQueue",
                     aliases=["lq", "ListQueue", "List", "list"],
                     help='Lists the songs in the queue')
     async def listQueue(ctx):
       await ctx.reply(
-        f"In der Queue befinden sich im Moment: \n {titleList[ctx.guild.id]}",
-        mention_author=False)
+          f"In der Queue befinden sich im Moment: \n {titleList[ctx.guild.id]}",
+          mention_author=False)
+
+    @client.command(name="lofi",
+                    aliases=["chill", "Lofi"],
+                    help='Play lofi music')
+    async def lofi(ctx):
+      voice_channel = ctx.author.voice.channel
+      if ctx.voice_client is None:
+        await voice_channel.connect()
+      else:
+        await ctx.voice_client.move_to(voice_channel)
+      url = "https://www.youtube.com/watch?v=jfKfPfyJRdk"
+      await player(ctx, url, None)
+
+    @client.command(name="karaoke",
+                    help='Search for any song you want to sing karaoke')
+    async def karaoke(ctx, *, search_term):
+      voice_channel = ctx.author.voice.channel
+      if ctx.voice_client is None:
+        await voice_channel.connect()
+      else:
+        await ctx.voice_client.move_to(voice_channel)
+      yt_query = f"{search_term} Karaoke"
+      # Suche nach dem Song auf Genius
+      ##gn_query = f"{search_term}"
+      ##song = genius.search_song(gn_query)
+      # Sende die Lyrics als Nachricht
+      ##if song:
+      ## lyrics = song.lyrics[:2000]  # Begrenzung auf 2000 Zeichen
+      await player(ctx, None, yt_query)
+
+    @client.command(name="search", help='Search for any song you want')
+    async def search_song(ctx, *, search_term):
+      voice_channel = ctx.author.voice.channel
+      if ctx.voice_client is None:
+        await voice_channel.connect()
+      else:
+        await ctx.voice_client.move_to(voice_channel)
+      yt_query = f"{search_term}"
+      vc = ctx.voice_client
+      if vc.is_playing():
+        await add_queue(ctx, None, yt_query)
+      else:
+        await player(ctx, None, yt_query)
 
     @client.command(name="pause",
                     aliases=["ps", "Pause"],
@@ -111,8 +146,21 @@ class music(commands.Cog):
                     aliases=["s", "Skip"],
                     help='Skips to the next song')
     async def skip(ctx):
-      ctx.voice_client.stop()
-      play_next(ctx)
+      vc = ctx.voice_client
+      if vc.is_playing():
+        vc.stop()
+        # Warte kurz, damit der Voice-Client den Stop verarbeitet
+        await asyncio.sleep(0.1)
+      # Starte den nächsten Song thread-sicher
+      await play_next(ctx)
+
+    @client.command(name="stop",
+                    aliases=["stp", "Stop"],
+                    help='Stops the current Song')
+    async def stop(ctx):
+      vc = ctx.voice_client
+      if vc.is_playing():
+        vc.stop()
 
     @client.command(name="clearQueue",
                     aliases=["cl", "ClearQueue", "clear", "Clear"],
@@ -126,26 +174,22 @@ def setup(client):
 
 
 def convert(seconds):
-  seconds = seconds % (24 * 3600)
-  seconds %= 3600
-  minutes = seconds // 60
-  seconds %= 60
-  return "%02d:%02d" % (minutes, seconds)
+  if seconds < 3600:  # Wenn die Zeit weniger als eine Stunde beträgt
+    minutes = seconds // 60
+    seconds %= 60
+    return "%02d:%02d" % (minutes, seconds)
+  else:  # Wenn die Zeit eine Stunde oder mehr beträgt
+    hours = seconds // 3600
+    seconds %= 3600
+    minutes = seconds // 60
+    seconds %= 60
+    return "%02d:%02d:%02d" % (hours, minutes, seconds)
 
 
-def play_next(ctx):
-  vc = ctx.voice_client
+async def play_next(ctx):
   if len(queueList[ctx.guild.id]) > 0:
     url = getQueue(ctx)
-    with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
-      info = ydl.extract_info(url, download=False)
-      ##currentTrack = info['title']
-      url2 = info['url']
-      source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
-      discord.opus.load_opus('opus/libopus.so')
-      if not discord.opus.is_loaded():
-        raise RuntimeError('Opus failed to load')
-      vc.play(source, after=lambda e: play_next(ctx))
+    await player(ctx, url, None)
 
 
 def getQueue(ctx):
@@ -158,3 +202,62 @@ def getQueue(ctx):
 def clearQ(ctx):
   del (queueList[ctx.guild.id])
   del (titleList[ctx.guild.id])
+
+
+async def player(ctx, url, search):
+  vc = ctx.voice_client
+  with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
+    if search:
+      info = ydl.extract_info(f"ytsearch:{search}",
+                              download=False)['entries'][0]
+    elif url:
+      info = ydl.extract_info(url, download=False)
+    url2 = info['url']
+    titleInfo = info['title']
+    # Überprüfe, ob die Dauer vorhanden ist, bevor du sie verwendest
+    # und konvertiere sie in ein lesbares Format
+    duration = info.get('duration')
+    if duration is not None:
+      duration = convert(info['duration'])
+      await ctx.reply(f"🎶Wird gespielt🎶\n**{titleInfo}**  ({duration}))",
+                      mention_author=False)
+    else:
+      await ctx.reply(f"🎶Wird gespielt🎶\n**{titleInfo}**",
+                      mention_author=False)
+    source = discord.FFmpegPCMAudio(url2, **FFMPEG_OPTIONS)
+    discord.opus.load_opus('opus/libopus.so')
+    if not discord.opus.is_loaded():
+      raise RuntimeError('Opus failed to load')
+    vc.play(source,
+            after=lambda e: asyncio.run_coroutine_threadsafe(
+                play_next(ctx), ctx.bot.loop).result())
+
+
+async def add_queue(ctx, url, search):
+  # Stelle sicher, dass die Warteschlange für die Guild existiert
+  if ctx.guild.id not in queueList:
+    queueList[ctx.guild.id] = []
+    titleList[ctx.guild.id] = []
+
+  if search:
+    with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
+      # Extrahiere Song-Daten aus der Suchanfrage
+      info = ydl.extract_info(f"ytsearch:{search}",
+                              download=False)['entries'][0]
+      url = info['url']  # Verwende direkt die URL aus der Suche
+      title = info['title']
+      duration = convert(info['duration'])
+    queueList[ctx.guild.id].append(url)
+    titleList[ctx.guild.id].append(title)
+
+  elif url:
+    with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
+      # Extrahiere Song-Daten aus dem direkten Link
+      info = ydl.extract_info(url, download=False)
+      title = info['title']
+      duration = convert(info['duration'])
+    queueList[ctx.guild.id].append(url)
+    titleList[ctx.guild.id].append(title)
+
+  await ctx.reply(f"**{title}** ({duration}) zur Warteschlange hinzugefügt 🎶",
+                  mention_author=False)

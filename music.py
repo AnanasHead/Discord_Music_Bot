@@ -3,16 +3,26 @@ import discord
 from discord.ext import commands
 import yt_dlp as youtube_dl
 import asyncio
+import logging
 ##from lyricsgenius import Genius
 ##import os
 
+# Warteschlangen für die Songs
 queueList = {}
 titleList = {}
+durationList = {}
+
+# Logging Setup
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename='example.log',
+                    encoding='utf-8',
+                    level=logging.DEBUG)
 
 # Genius API Setup
 ##secret = os.environ['GENIUS_ACCESS_TOKEN']
 ##genius = Genius(secret)
 
+# FFmpeg and YDL Options
 FFMPEG_OPTIONS = {
     'before_options':
     '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -60,7 +70,7 @@ class music(commands.Cog):
         await ctx.voice_client.move_to(voice_channel)
 
       ctx.voice_client.stop()
-      await player(ctx, url, None)
+      await player(ctx, url, None, None, None)
 
     @client.command(name="queue",
                     aliases=["q", "Queue", "next", "Next"],
@@ -95,7 +105,7 @@ class music(commands.Cog):
       else:
         await ctx.voice_client.move_to(voice_channel)
       url = "https://www.youtube.com/watch?v=jfKfPfyJRdk"
-      await player(ctx, url, None)
+      await player(ctx, url, None, None, None)
 
     @client.command(name="karaoke",
                     help='Search for any song you want to sing karaoke')
@@ -112,7 +122,7 @@ class music(commands.Cog):
       # Sende die Lyrics als Nachricht
       ##if song:
       ## lyrics = song.lyrics[:2000]  # Begrenzung auf 2000 Zeichen
-      await player(ctx, None, yt_query)
+      await player(ctx, None, None, None, yt_query)
 
     @client.command(name="search", help='Search for any song you want')
     async def search_song(ctx, *, search_term):
@@ -126,7 +136,7 @@ class music(commands.Cog):
       if vc.is_playing():
         await add_queue(ctx, None, yt_query)
       else:
-        await player(ctx, None, yt_query)
+        await player(ctx, None, None, None, yt_query)
 
     @client.command(name="pause",
                     aliases=["ps", "Pause"],
@@ -188,37 +198,47 @@ def convert(seconds):
 
 async def play_next(ctx):
   if len(queueList[ctx.guild.id]) > 0:
-    url = getQueue(ctx)
-    await player(ctx, url, None)
+    url, title, duration = getQueue(ctx)
+    await player(ctx, url, title, duration, None)
 
 
 def getQueue(ctx):
   url = queueList[ctx.guild.id][0]
+  title = titleList[ctx.guild.id][0]
+  duration = durationList[ctx.guild.id][0]
   del (queueList[ctx.guild.id][0])
   del (titleList[ctx.guild.id][0])
-  return url
+  del (durationList[ctx.guild.id][0])
+  return url, title, duration
 
 
 def clearQ(ctx):
   del (queueList[ctx.guild.id])
   del (titleList[ctx.guild.id])
+  del (durationList[ctx.guild.id])
 
 
-async def player(ctx, url, search):
+async def player(ctx, url, title, duration, search):
   vc = ctx.voice_client
   with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
     if search:
-      info = ydl.extract_info(f"ytsearch:{search}",
-                              download=False)['entries'][0]
+      info = ydl.extract_info(f"ytsearch:{search}",download=False)['entries'][0]
     elif url:
       info = ydl.extract_info(url, download=False)
     url2 = info['url']
-    titleInfo = info['title']
+    # Überprüfe, ob der Titel vorhanden ist, bevor du ihn verwendest
+    if title:
+      titleInfo = title
+    elif title is None:
+      titleInfo = info['title']
     # Überprüfe, ob die Dauer vorhanden ist, bevor du sie verwendest
-    # und konvertiere sie in ein lesbares Format
-    duration = info.get('duration')
+    logger.debug(f"Sekunden des aktuellen Songs {duration}")
+    if duration is None:
+      duration = convert(info.get('duration'))
+    elif duration is not None:
+      duration = convert(duration)
     if duration is not None:
-      duration = convert(info['duration'])
+      logger.debug(f"Sekunden des aktuellen Songs vor Convert {duration}")
       await ctx.reply(f"🎶Wird gespielt🎶\n**{titleInfo}**  ({duration}))",
                       mention_author=False)
     else:
@@ -238,6 +258,7 @@ async def add_queue(ctx, url, search):
   if ctx.guild.id not in queueList:
     queueList[ctx.guild.id] = []
     titleList[ctx.guild.id] = []
+    durationList[ctx.guild.id] = []
 
   if search:
     with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
@@ -246,18 +267,26 @@ async def add_queue(ctx, url, search):
                               download=False)['entries'][0]
       url = info['url']  # Verwende direkt die URL aus der Suche
       title = info['title']
-      duration = convert(info['duration'])
+      duration = info.get('duration')
     queueList[ctx.guild.id].append(url)
     titleList[ctx.guild.id].append(title)
+    durationList[ctx.guild.id].append(info.get('duration'))
 
   elif url:
     with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
       # Extrahiere Song-Daten aus dem direkten Link
       info = ydl.extract_info(url, download=False)
       title = info['title']
-      duration = convert(info['duration'])
+      duration = info.get('duration')
     queueList[ctx.guild.id].append(url)
     titleList[ctx.guild.id].append(title)
+    durationList[ctx.guild.id].append(info.get('duration'))
 
-  await ctx.reply(f"**{title}** ({duration}) zur Warteschlange hinzugefügt 🎶",
-                  mention_author=False)
+  if duration is not None:
+    duration = convert(info['duration'])
+    await ctx.reply(
+        f"**{title}** ({duration}) zur Warteschlange hinzugefügt 🎶",
+        mention_author=False)
+  else:
+    await ctx.reply(f"**{title}** zur Warteschlange hinzugefügt 🎶",
+                    mention_author=False)
